@@ -1,62 +1,67 @@
 package rocksdb
 
 import (
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
-)
 
-const markerFileName = "store.json"
+	native "github.com/yanjie/rockskit/internal/cgo"
+)
 
 type DB struct {
 	path string
+	hdl  *native.DB
 
 	mu     sync.Mutex
 	closed bool
 }
 
-func Create(path string) (*DB, error) {
+func Create(path string, envCfg *EnvConfig, cfg *Config) (*DB, error) {
 	cleanPath := filepath.Clean(path)
-
-	if _, err := os.Stat(cleanPath); err == nil {
-		return nil, fmt.Errorf("create rocksdb at %q: already exists", cleanPath)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("stat rocksdb path %q: %w", cleanPath, err)
+	_ = cloneEnvConfig(envCfg)
+	cfg = cloneConfig(cfg)
+	cfg.CreateIfMissing = true
+	cfg.ErrorIfExists = true
+	if err := ValidateConfig(cfg); err != nil {
+		return nil, err
 	}
 
-	if err := os.MkdirAll(cleanPath, 0o755); err != nil {
-		return nil, fmt.Errorf("create rocksdb dir %q: %w", cleanPath, err)
+	options, err := buildNativeOptions(cfg)
+	if err != nil {
+		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(cleanPath, markerFileName), []byte("{}\n"), 0o644); err != nil {
-		return nil, fmt.Errorf("initialize rocksdb at %q: %w", cleanPath, err)
+	defer options.Close()
+
+	hdl, err := native.Open(cleanPath, options)
+	if err != nil {
+		return nil, fmt.Errorf("create rocksdb at %q: %w", cleanPath, err)
 	}
 
-	return &DB{path: cleanPath}, nil
+	return &DB{path: cleanPath, hdl: hdl}, nil
 }
 
-func Open(path string) (*DB, error) {
+func Open(path string, envCfg *EnvConfig, cfg *Config) (*DB, error) {
 	cleanPath := filepath.Clean(path)
+	_ = cloneEnvConfig(envCfg)
+	cfg = cloneConfig(cfg)
+	cfg.CreateIfMissing = false
+	cfg.ErrorIfExists = false
+	if err := ValidateConfig(cfg); err != nil {
+		return nil, err
+	}
 
-	info, err := os.Stat(cleanPath)
+	options, err := buildNativeOptions(cfg)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("open rocksdb at %q: not found", cleanPath)
-		}
-		return nil, fmt.Errorf("stat rocksdb path %q: %w", cleanPath, err)
+		return nil, err
 	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("open rocksdb at %q: not a directory", cleanPath)
-	}
-	if _, err := os.Stat(filepath.Join(cleanPath, markerFileName)); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("open rocksdb at %q: not initialized", cleanPath)
-		}
-		return nil, fmt.Errorf("check rocksdb marker at %q: %w", cleanPath, err)
+	defer options.Close()
+
+	hdl, err := native.Open(cleanPath, options)
+	if err != nil {
+		return nil, fmt.Errorf("open rocksdb at %q: %w", cleanPath, err)
 	}
 
-	return &DB{path: cleanPath}, nil
+	return &DB{path: cleanPath, hdl: hdl}, nil
 }
 
 func (db *DB) Close() error {
@@ -66,6 +71,49 @@ func (db *DB) Close() error {
 
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	if db.closed {
+		return nil
+	}
+	if db.hdl != nil {
+		db.hdl.Close()
+		db.hdl = nil
+	}
 	db.closed = true
 	return nil
+}
+
+func buildNativeOptions(cfg *Config) (*native.Options, error) {
+	writeBufferSize, err := parseByteSize(cfg.WriteBufferSize)
+	if err != nil {
+		return nil, err
+	}
+	targetFileSizeBase, err := parseByteSize(cfg.TargetFileSizeBase)
+	if err != nil {
+		return nil, err
+	}
+	maxBytesForLevelBase, err := parseByteSize(cfg.MaxBytesForLevelBase)
+	if err != nil {
+		return nil, err
+	}
+
+	return native.NewOptions(native.RawOptions{
+		WriteBufferSize:                writeBufferSize,
+		Level0FileNumCompactionTrigger: cfg.Level0FileNumCompactionTrigger,
+		TargetFileSizeBase:             targetFileSizeBase,
+		MaxBytesForLevelBase:           maxBytesForLevelBase,
+		CreateIfMissing:                cfg.CreateIfMissing,
+		ErrorIfExists:                  cfg.ErrorIfExists,
+		Compression:                    compressionCode(cfg.CompressionType),
+	}), nil
+}
+
+func compressionCode(value string) int {
+	switch normalizeCompressionType(value) {
+	case "lz4":
+		return 4
+	case "zstd":
+		return 7
+	default:
+		return 0
+	}
 }

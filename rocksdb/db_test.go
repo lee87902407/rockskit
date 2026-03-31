@@ -8,28 +8,32 @@ import (
 
 func TestCreateCreatesNewDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
+	envCfg := DefaultEnvConfig()
+	dbCfg := DefaultConfig()
 
-	db, err := Create(path)
+	db, err := Create(path, envCfg, dbCfg)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	defer db.Close()
 
-	if _, err := os.Stat(filepath.Join(path, markerFileName)); err != nil {
-		t.Fatalf("expected marker file to exist: %v", err)
+	if _, err := os.Stat(filepath.Join(path, "CURRENT")); err != nil {
+		t.Fatalf("expected CURRENT file from real rocksdb: %v", err)
 	}
 }
 
 func TestCreateFailsWhenDBAlreadyExists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
+	envCfg := DefaultEnvConfig()
+	dbCfg := DefaultConfig()
 
-	db, err := Create(path)
+	db, err := Create(path, envCfg, dbCfg)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	defer db.Close()
 
-	other, err := Create(path)
+	other, err := Create(path, envCfg, dbCfg)
 	if err == nil {
 		other.Close()
 		t.Fatal("expected Create() to fail for existing db")
@@ -38,27 +42,33 @@ func TestCreateFailsWhenDBAlreadyExists(t *testing.T) {
 
 func TestOpenFailsWhenDBIsMissing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing")
+	envCfg := DefaultEnvConfig()
+	dbCfg := DefaultConfig()
 
-	if _, err := Open(path); err == nil {
+	if _, err := Open(path, envCfg, dbCfg); err == nil {
 		t.Fatal("expected Open() to fail for missing db")
 	}
 }
 
 func TestOpenFailsForUninitializedDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "plain-dir")
+	envCfg := DefaultEnvConfig()
+	dbCfg := DefaultConfig()
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	if _, err := Open(path); err == nil {
+	if _, err := Open(path, envCfg, dbCfg); err == nil {
 		t.Fatal("expected Open() to fail for uninitialized db directory")
 	}
 }
 
 func TestCreateCloseThenOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
+	envCfg := DefaultEnvConfig()
+	dbCfg := DefaultConfig()
 
-	db, err := Create(path)
+	db, err := Create(path, envCfg, dbCfg)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -66,7 +76,7 @@ func TestCreateCloseThenOpen(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	reopened, err := Open(path)
+	reopened, err := Open(path, envCfg, dbCfg)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -75,8 +85,10 @@ func TestCreateCloseThenOpen(t *testing.T) {
 
 func TestCloseIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
+	envCfg := DefaultEnvConfig()
+	dbCfg := DefaultConfig()
 
-	db, err := Create(path)
+	db, err := Create(path, envCfg, dbCfg)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
