@@ -6,13 +6,55 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROCKSDB_DIR="$ROOT_DIR/third_party/rocksdb"
 NATIVE_DIR="$ROOT_DIR/native"
 
-if [[ $# -gt 0 ]]; then
-  TARGETS=("$@")
-else
+parse_args() {
+  TARGETS=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --linux-builder-image)
+        LINUX_BUILDER_IMAGE="$2"
+        shift 2
+        ;;
+      --replace-apt-source)
+        REPLACE_APT_SOURCE="$2"
+        shift 2
+        ;;
+      --docker-cache-dir)
+        DOCKER_CACHE_DIR="$2"
+        shift 2
+        ;;
+      *)
+        TARGETS+=("$1")
+        shift
+        ;;
+    esac
+  done
+}
+
+LINUX_BUILDER_IMAGE="${LINUX_BUILDER_IMAGE:-harbor.clever8790.top/yanjie/debian:trixie-slim}"
+REPLACE_APT_SOURCE="${REPLACE_APT_SOURCE:-1}"
+DOCKER_CACHE_DIR="${DOCKER_CACHE_DIR:-$ROOT_DIR/.cache/rocksdb-docker}"
+
+parse_args "$@"
+
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
   TARGETS=(darwin_arm64 linux_amd64 linux_arm64)
 fi
 
-LINUX_BUILDER_IMAGE="harbor.clever8790.top/yanjie/debian:trixie-slim"
+PORTABLE="${PORTABLE:-1}"
+USE_COROUTINES="${USE_COROUTINES:-ON}"
+USE_RTTI="${USE_RTTI:-ON}"
+WITH_SNAPPY="${WITH_SNAPPY:-ON}"
+WITH_LZ4="${WITH_LZ4:-ON}"
+WITH_ZLIB="${WITH_ZLIB:-ON}"
+WITH_JEMALLOC="${WITH_JEMALLOC:-ON}"
+WITH_ZSTD="${WITH_ZSTD:-ON}"
+WITH_BZ2="${WITH_BZ2:-ON}"
+WITH_NUMA="${WITH_NUMA:-ON}"
+WITH_TBB="${WITH_TBB:-ON}"
+WITH_LIBURING="${WITH_LIBURING:-ON}"
+WITH_GFLAGS="${WITH_GFLAGS:-ON}"
+FORCE_AVX="${FORCE_AVX:-ON}"
+FORCE_SSE42="${FORCE_SSE42:-ON}"
 
 if [[ ! -f "$ROCKSDB_DIR/include/rocksdb/c.h" ]]; then
   echo "rocksdb submodule is missing: $ROCKSDB_DIR" >&2
@@ -38,6 +80,13 @@ build_darwin() {
   local target="darwin_arm64"
   local build_dir="$ROCKSDB_DIR/build_prebuilt_${target}"
 
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "brew is required to install macOS build dependencies" >&2
+    exit 1
+  fi
+
+  brew install snappy lz4 zlib jemalloc zstd bzip2 gflags || true
+
   prepare_target_dir "$target"
   rm -rf "$build_dir"
   mkdir -p "$build_dir"
@@ -48,70 +97,29 @@ build_darwin() {
     -DCMAKE_OSX_ARCHITECTURES="$arch" \
     -DPORTABLE=1 \
     -DWITH_TESTS=OFF \
-    -DWITH_GFLAGS=OFF \
+    -DWITH_GFLAGS="$WITH_GFLAGS" \
     -DWITH_BENCHMARK_TOOLS=OFF \
     -DWITH_TOOLS=OFF \
     -DWITH_MD_LIBRARY=OFF \
     -DWITH_RUNTIME_DEBUG=OFF \
     -DROCKSDB_BUILD_SHARED=OFF \
-    -DWITH_SNAPPY=OFF \
-    -DWITH_LZ4=OFF \
-    -DWITH_ZLIB=OFF \
+    -DWITH_SNAPPY="$WITH_SNAPPY" \
+    -DWITH_LZ4="$WITH_LZ4" \
+    -DWITH_ZLIB="$WITH_ZLIB" \
     -DWITH_LIBURING=OFF \
-    -DWITH_JEMALLOC=OFF \
+    -DWITH_JEMALLOC="$WITH_JEMALLOC" \
     -DWITH_NUMA=OFF \
     -DWITH_TBB=OFF \
-    -DUSE_RTTI=ON \
+    -DUSE_RTTI="$USE_RTTI" \
     -DWITH_TRACE_TOOLS=OFF \
     -DWITH_CORE_TOOLS=OFF \
     -DUSE_FOLLY=OFF \
     -DUSE_COROUTINES=OFF \
-    -DWITH_ZSTD=OFF \
-    -DWITH_BZ2=OFF
+    -DWITH_ZSTD="$WITH_ZSTD" \
+    -DWITH_BZ2="$WITH_BZ2"
 
   cmake --build "$build_dir" --target rocksdb -j"$(sysctl -n hw.ncpu)"
   cp "$build_dir/librocksdb.a" "$NATIVE_DIR/$target/librocksdb.a"
-}
-
-linux_build_script() {
-  cat <<'EOF'
-set -euo pipefail
-if [ -f /etc/apt/sources.list ]; then
-  sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list
-fi
-if [ -f /etc/apt/sources.list.d/debian.sources ]; then
-  sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources
-fi
-apt-get update
-apt-get install -y build-essential cmake pkg-config
-cmake -S /src/third_party/rocksdb -B /tmp/rocksdb-build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-  -DPORTABLE=1 \
-  -DWITH_TESTS=OFF \
-  -DWITH_GFLAGS=OFF \
-  -DWITH_BENCHMARK_TOOLS=OFF \
-  -DWITH_TOOLS=OFF \
-  -DWITH_MD_LIBRARY=OFF \
-  -DWITH_RUNTIME_DEBUG=OFF \
-  -DROCKSDB_BUILD_SHARED=OFF \
-  -DWITH_SNAPPY=OFF \
-  -DWITH_LZ4=OFF \
-  -DWITH_ZLIB=OFF \
-  -DWITH_LIBURING=OFF \
-  -DWITH_JEMALLOC=OFF \
-  -DWITH_NUMA=OFF \
-  -DWITH_TBB=OFF \
-  -DUSE_RTTI=ON \
-  -DWITH_TRACE_TOOLS=OFF \
-  -DWITH_CORE_TOOLS=OFF \
-  -DUSE_FOLLY=OFF \
-  -DUSE_COROUTINES=OFF \
-  -DWITH_ZSTD=OFF \
-  -DWITH_BZ2=OFF
-cmake --build /tmp/rocksdb-build --target rocksdb -j"$(nproc)"
-cp /tmp/rocksdb-build/librocksdb.a /out/librocksdb.a
-EOF
 }
 
 build_linux() {
@@ -128,16 +136,45 @@ build_linux() {
   prepare_target_dir "$target"
 
   image_ref="$(resolve_linux_builder_image "$arch")"
+  mkdir -p "$DOCKER_CACHE_DIR/apt-$arch" "$DOCKER_CACHE_DIR/build-$arch"
 
   docker run --rm --platform "$platform" \
     -v "$ROOT_DIR:/src" \
     -v "$NATIVE_DIR/$target:/out" \
-    "$image_ref" bash -lc "$(linux_build_script)"
+    -v "$DOCKER_CACHE_DIR/apt-$arch:/var/cache/apt" \
+    -v "$DOCKER_CACHE_DIR/build-$arch:/tmp/rocksdb-build" \
+    -e ROOT_DIR=/src \
+    -e OUT_DIR=/out \
+    -e ROCKSDB_DIR=/src/third_party/rocksdb \
+    -e TARGET_ARCH="$arch" \
+    -e REPLACE_APT_SOURCE="$REPLACE_APT_SOURCE" \
+    -e PORTABLE="$PORTABLE" \
+    -e USE_COROUTINES="$USE_COROUTINES" \
+    -e USE_RTTI="$USE_RTTI" \
+    -e WITH_SNAPPY="$WITH_SNAPPY" \
+    -e WITH_TBB="$WITH_TBB" \
+    -e WITH_NUMA="$WITH_NUMA" \
+    -e WITH_LZ4="$WITH_LZ4" \
+    -e WITH_ZLIB="$WITH_ZLIB" \
+    -e WITH_LIBURING="$WITH_LIBURING" \
+    -e WITH_JEMALLOC="$WITH_JEMALLOC" \
+    -e WITH_ZSTD="$WITH_ZSTD" \
+    -e WITH_BZ2="$WITH_BZ2" \
+    -e WITH_GFLAGS="$WITH_GFLAGS" \
+    -e FORCE_AVX="$FORCE_AVX" \
+    -e FORCE_SSE42="$FORCE_SSE42" \
+    "$image_ref" bash /src/scripts/build-rocksdb-linux.sh
 }
 
 resolve_linux_builder_image() {
   local arch="$1"
   local image_id
+  if docker image inspect "$LINUX_BUILDER_IMAGE" >/dev/null 2>&1; then
+    if [[ "$(docker image inspect "$LINUX_BUILDER_IMAGE" --format '{{.Architecture}}' 2>/dev/null)" == "$arch" ]]; then
+      printf '%s\n' "$LINUX_BUILDER_IMAGE"
+      return 0
+    fi
+  fi
   while IFS= read -r image_id; do
     if [[ -n "$image_id" ]] && [[ "$(docker image inspect "$image_id" --format '{{.Architecture}}' 2>/dev/null)" == "$arch" ]]; then
       printf '%s\n' "$image_id"
