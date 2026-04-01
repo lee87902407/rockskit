@@ -27,6 +27,9 @@ func TestNativeArtifactDir(t *testing.T) {
 }
 
 func TestUnsupportedPlatform(t *testing.T) {
+	if _, err := nativeArtifactDir("darwin", "amd64"); err == nil {
+		t.Fatal("expected darwin/amd64 to be unsupported")
+	}
 	if _, err := nativeArtifactDir("windows", "amd64"); err == nil {
 		t.Fatal("expected unsupported platform error")
 	}

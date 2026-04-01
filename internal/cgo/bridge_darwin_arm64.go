@@ -4,6 +4,6 @@ package cgo
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../native/darwin_arm64/include
-#cgo LDFLAGS: ${SRCDIR}/../../native/darwin_arm64/librocksdb.a -lc++ -lm
+#cgo LDFLAGS: -L/opt/homebrew/opt/snappy/lib -L/opt/homebrew/opt/lz4/lib -L/opt/homebrew/opt/zstd/lib -L/opt/homebrew/opt/jemalloc/lib -L/opt/homebrew/opt/zlib/lib -L/opt/homebrew/opt/bzip2/lib ${SRCDIR}/../../native/darwin_arm64/librocksdb.a -lsnappy -llz4 -lzstd -ljemalloc -lz -lbz2 -lc++ -lm
 */
 import "C"
