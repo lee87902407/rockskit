@@ -27,6 +27,17 @@ FORCE_SSE42="${FORCE_SSE42:-OFF}"
 EXTRA_CFLAGS="${EXTRA_CFLAGS:-}"
 EXTRA_CXXFLAGS="${EXTRA_CXXFLAGS:-}"
 
+HOST_OS="$(uname -s)"
+
+if [[ "$HOST_OS" == "Darwin" ]]; then
+  WITH_JEMALLOC="OFF"
+fi
+
+if [[ "$HOST_OS" == "Linux" && "$WITH_JEMALLOC" != "ON" ]]; then
+  echo "Linux builds require WITH_JEMALLOC=ON" >&2
+  exit 1
+fi
+
 if [[ ! -f "$ROCKSDB_DIR/include/rocksdb/c.h" ]]; then
   echo "rocksdb submodule is missing: $ROCKSDB_DIR" >&2
   exit 1

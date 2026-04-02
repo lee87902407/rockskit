@@ -56,6 +56,18 @@ WITH_GFLAGS="${WITH_GFLAGS:-ON}"
 FORCE_AVX="${FORCE_AVX:-ON}"
 FORCE_SSE42="${FORCE_SSE42:-ON}"
 
+WITH_JEMALLOC_DARWIN="OFF"
+WITH_JEMALLOC_LINUX="ON"
+
+if [[ "$WITH_JEMALLOC" != "ON" && "$WITH_JEMALLOC" != "OFF" ]]; then
+  echo "WITH_JEMALLOC must be ON or OFF" >&2
+  exit 1
+fi
+
+if [[ "$WITH_JEMALLOC" == "OFF" ]]; then
+  WITH_JEMALLOC_LINUX="OFF"
+fi
+
 if [[ ! -f "$ROCKSDB_DIR/include/rocksdb/c.h" ]]; then
   echo "rocksdb submodule is missing: $ROCKSDB_DIR" >&2
   exit 1
@@ -72,6 +84,7 @@ prepare_target_dir() {
   local target="$1"
   mkdir -p "$NATIVE_DIR/$target"
   rm -f "$NATIVE_DIR/$target/librocksdb.a"
+  rm -rf "$NATIVE_DIR/$target/deps"
   copy_headers "$NATIVE_DIR/$target"
 }
 
@@ -85,7 +98,7 @@ build_darwin() {
     exit 1
   fi
 
-  brew install snappy lz4 zlib jemalloc zstd bzip2 gflags || true
+  brew install snappy lz4 zlib zstd bzip2 gflags || true
 
   prepare_target_dir "$target"
   rm -rf "$build_dir"
@@ -107,7 +120,7 @@ build_darwin() {
     -DWITH_LZ4="$WITH_LZ4" \
     -DWITH_ZLIB="$WITH_ZLIB" \
     -DWITH_LIBURING=OFF \
-    -DWITH_JEMALLOC="$WITH_JEMALLOC" \
+    -DWITH_JEMALLOC="$WITH_JEMALLOC_DARWIN" \
     -DWITH_NUMA=OFF \
     -DWITH_TBB=OFF \
     -DUSE_RTTI="$USE_RTTI" \
@@ -157,7 +170,7 @@ build_linux() {
     -e WITH_LZ4="$WITH_LZ4" \
     -e WITH_ZLIB="$WITH_ZLIB" \
     -e WITH_LIBURING="$WITH_LIBURING" \
-    -e WITH_JEMALLOC="$WITH_JEMALLOC" \
+    -e WITH_JEMALLOC="$WITH_JEMALLOC_LINUX" \
     -e WITH_ZSTD="$WITH_ZSTD" \
     -e WITH_BZ2="$WITH_BZ2" \
     -e WITH_GFLAGS="$WITH_GFLAGS" \

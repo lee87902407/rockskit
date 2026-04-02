@@ -8,10 +8,9 @@ import (
 
 func TestCreateCreatesNewDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
-	envCfg := DefaultEnvConfig()
 	dbCfg := DefaultConfig()
 
-	db, err := Create(path, envCfg, dbCfg)
+	db, err := Create(path, dbCfg)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -24,16 +23,15 @@ func TestCreateCreatesNewDB(t *testing.T) {
 
 func TestCreateFailsWhenDBAlreadyExists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
-	envCfg := DefaultEnvConfig()
 	dbCfg := DefaultConfig()
 
-	db, err := Create(path, envCfg, dbCfg)
+	db, err := Create(path, dbCfg)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	defer db.Close()
 
-	other, err := Create(path, envCfg, dbCfg)
+	other, err := Create(path, dbCfg)
 	if err == nil {
 		other.Close()
 		t.Fatal("expected Create() to fail for existing db")
@@ -42,33 +40,30 @@ func TestCreateFailsWhenDBAlreadyExists(t *testing.T) {
 
 func TestOpenFailsWhenDBIsMissing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing")
-	envCfg := DefaultEnvConfig()
 	dbCfg := DefaultConfig()
 
-	if _, err := Open(path, envCfg, dbCfg); err == nil {
+	if _, err := Open(path, dbCfg); err == nil {
 		t.Fatal("expected Open() to fail for missing db")
 	}
 }
 
 func TestOpenFailsForUninitializedDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "plain-dir")
-	envCfg := DefaultEnvConfig()
 	dbCfg := DefaultConfig()
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	if _, err := Open(path, envCfg, dbCfg); err == nil {
+	if _, err := Open(path, dbCfg); err == nil {
 		t.Fatal("expected Open() to fail for uninitialized db directory")
 	}
 }
 
 func TestCreateCloseThenOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
-	envCfg := DefaultEnvConfig()
 	dbCfg := DefaultConfig()
 
-	db, err := Create(path, envCfg, dbCfg)
+	db, err := Create(path, dbCfg)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -76,7 +71,7 @@ func TestCreateCloseThenOpen(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	reopened, err := Open(path, envCfg, dbCfg)
+	reopened, err := Open(path, dbCfg)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -85,10 +80,9 @@ func TestCreateCloseThenOpen(t *testing.T) {
 
 func TestCloseIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "db")
-	envCfg := DefaultEnvConfig()
 	dbCfg := DefaultConfig()
 
-	db, err := Create(path, envCfg, dbCfg)
+	db, err := Create(path, dbCfg)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -99,4 +93,38 @@ func TestCloseIsIdempotent(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatalf("second Close() error = %v", err)
 	}
+}
+
+func TestCreateUsesExpandedConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "db")
+	cfg := DefaultConfig()
+	cfg.LRUSize = "256MB"
+	cfg.BlockSize = "16KB"
+	cfg.RateBytesPerSec = "200MB"
+	cfg.WriteBufferNumber = 8
+
+	db, err := Create(path, cfg)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	defer db.Close()
+}
+
+func TestCreateOrOpenCreatesThenOpens(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "db")
+	cfg := DefaultConfig()
+
+	db, err := createOrOpen(path, cfg)
+	if err != nil {
+		t.Fatalf("first createOrOpen() error = %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+
+	reopened, err := createOrOpen(path, cfg)
+	if err != nil {
+		t.Fatalf("second createOrOpen() error = %v", err)
+	}
+	defer reopened.Close()
 }

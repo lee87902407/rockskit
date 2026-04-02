@@ -7,6 +7,7 @@ OUT_DIR="${OUT_DIR:-/out}"
 ROCKSDB_DIR="${ROCKSDB_DIR:-$ROOT_DIR/third_party/rocksdb}"
 REPLACE_APT_SOURCE="${REPLACE_APT_SOURCE:-0}"
 TARGET_ARCH="${TARGET_ARCH:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"
+DEP_DIR="$OUT_DIR/deps"
 
 PORTABLE="${PORTABLE:-1}"
 USE_COROUTINES="${USE_COROUTINES:-ON}"
@@ -23,6 +24,11 @@ WITH_BZ2="${WITH_BZ2:-ON}"
 WITH_GFLAGS="${WITH_GFLAGS:-ON}"
 FORCE_AVX="${FORCE_AVX:-ON}"
 FORCE_SSE42="${FORCE_SSE42:-ON}"
+
+if [[ "$WITH_JEMALLOC" != "ON" ]]; then
+  echo "Linux prebuilt RocksDB requires WITH_JEMALLOC=ON" >&2
+  exit 1
+fi
 
 if [[ "$TARGET_ARCH" != "amd64" && "$TARGET_ARCH" != "x86_64" ]]; then
   FORCE_AVX="OFF"
@@ -95,3 +101,38 @@ cmake -S "$ROCKSDB_DIR" -B /tmp/rocksdb-build \
 
 cmake --build /tmp/rocksdb-build --target rocksdb -j"$(nproc)"
 cp /tmp/rocksdb-build/librocksdb.a "$OUT_DIR/librocksdb.a"
+
+copy_dep_lib() {
+  local name="$1"
+  local candidates=(
+    "/usr/lib/*-linux-gnu/${name}.a"
+    "/usr/lib/*-linux-gnu/${name}.so"
+    "/usr/lib/*-linux-gnu/${name}.so.*"
+    "/lib/*-linux-gnu/${name}.a"
+    "/lib/*-linux-gnu/${name}.so"
+    "/lib/*-linux-gnu/${name}.so.*"
+    "/usr/lib/${name}.a"
+    "/usr/lib/${name}.so"
+    "/usr/lib/${name}.so.*"
+    "/lib/${name}.a"
+    "/lib/${name}.so"
+    "/lib/${name}.so.*"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    for path in $candidate; do
+      if [[ -f "$path" ]]; then
+        cp "$path" "$DEP_DIR/"
+        return 0
+      fi
+    done
+  done
+
+  echo "missing dependency library: $name" >&2
+  return 1
+}
+
+mkdir -p "$DEP_DIR"
+for lib in libsnappy liblz4 libz libzstd libbz2 libjemalloc libnuma libtbb liburing libgflags libglog; do
+  copy_dep_lib "$lib"
+done

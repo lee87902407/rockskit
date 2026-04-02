@@ -12,6 +12,10 @@ import (
 )
 
 func errFromC(errptr *C.char, action string) error {
+	return errFromCString(errptr, action)
+}
+
+func errFromCString(errptr *C.char, action string) error {
 	if errptr == nil {
 		return nil
 	}

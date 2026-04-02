@@ -112,6 +112,7 @@ rockskit/
 - Prefer one public Go package (`rocksdb/` or equivalent main package) and hide all CGO details under `internal/cgo/`.
 - Keep the Go-visible API surface small and stable; do not mirror the full RocksDB C API unless the project actually uses it.
 - Isolate all `import "C"`, `#cgo`, `unsafe`, and pointer conversion helpers inside `internal/cgo/`.
+- 代码注释统一使用中文，避免在同一项目中混用中英文注释。
 - Use the C layer only for repeated RocksDB call normalization and callback glue; simple CRUD wrappers do not need extra abstraction beyond what reduces duplication.
 - Preserve defensive copy semantics for user-visible `[]byte` values when crossing from native buffers into Go-owned memory.
 - Centralize `char** errptr` extraction and freeing in one CGO helper path; every failing RocksDB call should become a normal Go `error`.

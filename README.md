@@ -44,10 +44,9 @@ import (
 )
 
 func main() {
-	envCfg := rocksdb.DefaultEnvConfig()
 	dbCfg := rocksdb.DefaultConfig()
 
-	db, err := rocksdb.Create("./example-db", envCfg, dbCfg)
+	db, err := rocksdb.Create("./example-db", dbCfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -280,19 +279,18 @@ WITH_SNAPPY=ON WITH_ZSTD=ON USE_COROUTINES=1 ./scripts/build-rocksdb.sh
 
 ## 六、macOS arm64 构建说明
 
-你要求在编译 mac 版本 RocksDB 时，将以下选项改为 `true`：
+当前实现里，macOS arm64 预编译产物**不再使用 jemalloc**。
 
 - `WITH_SNAPPY`
 - `WITH_LZ4`
 - `WITH_ZLIB`
-- `WITH_JEMALLOC`
 - `WITH_ZSTD`
 - `WITH_BZ2`
 
-当前实现已按此调整，并且在执行 mac 构建前会尝试通过 Homebrew 安装缺失组件：
+执行 mac 构建前会尝试通过 Homebrew 安装缺失组件：
 
 ```bash
-brew install snappy lz4 zlib jemalloc zstd bzip2 gflags || true
+brew install snappy lz4 zlib zstd bzip2 gflags || true
 ```
 
 mac 侧实际构建命令形态如下：
@@ -314,7 +312,7 @@ cmake -S third_party/rocksdb -B third_party/rocksdb/build_prebuilt_darwin_arm64 
   -DWITH_LZ4=ON \
   -DWITH_ZLIB=ON \
   -DWITH_LIBURING=OFF \
-  -DWITH_JEMALLOC=ON \
+  -DWITH_JEMALLOC=OFF \
   -DWITH_NUMA=OFF \
   -DWITH_TBB=OFF \
   -DUSE_RTTI=ON \
@@ -326,7 +324,9 @@ cmake -S third_party/rocksdb -B third_party/rocksdb/build_prebuilt_darwin_arm64 
   -DWITH_BZ2=ON
 ```
 
-这里没有把 `USE_COROUTINES` 打开，是因为当前仓库的 macOS 预编译流程并不打算把 Folly/coroutines 依赖链也一起带进来；而你特别要求读取源码内关于 `USE_COROUTINES` 的编译内容，所以这里把结论写清楚：
+这里没有把 `USE_COROUTINES` 打开，是因为当前仓库的 macOS 预编译流程并不打算把 Folly/coroutines 依赖链也一起带进来；另外 jemalloc-nodump 相关能力在 macOS 下不作为当前仓库的预编译目标，因此脚本会直接关闭 `WITH_JEMALLOC`。
+
+关于 `USE_COROUTINES`，这里把当前结论写清楚：
 
 - upstream `CMakeLists.txt` 里，`USE_COROUTINES` 会引出更特殊的编译要求
 - 它会影响 gflags/Folly 相关逻辑
@@ -350,7 +350,7 @@ cmake -S third_party/rocksdb -B third_party/rocksdb/build_prebuilt_darwin_arm64 
 - `WITH_ZSTD`
 - `WITH_BZ2`
 
-当前 Linux 独立构建脚本已经按这个方向实现，并且会安装你列出的依赖。
+当前 Linux 独立构建脚本已经按这个方向实现，并且**强制要求 `WITH_JEMALLOC=ON`**；如果显式传成 `OFF`，脚本会直接报错退出。
 
 容器内安装依赖命令如下：
 
