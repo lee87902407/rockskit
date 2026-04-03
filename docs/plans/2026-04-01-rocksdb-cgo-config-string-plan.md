@@ -1,152 +1,152 @@
-# RocksDB CGO Config String Implementation Plan
+# RocksDB CGO 配置字符串实现计划
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **给 Claude：** 必须使用 `superpowers:executing-plans` 子技能按任务逐步执行本计划。
 
-**Goal:** Rework the low-level CGO layer so RocksDB C handles are wrapped in pointer-only Go objects with `Close()` methods, expand `rocksdb.Config` to the requested surface, and make `Create`/`Open` build RocksDB options from a config string via `rocksdb_get_options_from_string`.
+**目标：** 重构底层 CGO 层，使 RocksDB C 句柄以仅持有指针的 Go 对象进行封装并统一提供 `Close()` 方法；扩展 `rocksdb.Config` 到用户要求的配置面；并让 `Create`/`Open` 能通过配置字符串结合 `rocksdb_get_options_from_string` 构建 RocksDB 选项。
 
-**Architecture:** Keep `internal/cgo` as the only place that touches raw `rocksdb/c.h` pointers and lifetime management. Public `rocksdb/` code should only assemble config text, call the low-level wrappers, and return Go-facing `DB` wrappers with explicit `Close()` semantics.
+**架构：** `internal/cgo` 仍然是唯一允许直接接触原始 `rocksdb/c.h` 指针和生命周期管理的位置。对外的 `rocksdb/` 代码只负责组装配置文本、调用底层封装，并返回具备显式 `Close()` 语义的 Go 风格 `DB` 包装对象。
 
-**Tech Stack:** Go 1.25.3, CGO, vendored RocksDB C API, prebuilt static archives, Go tests.
+**技术栈：** Go 1.25.3、CGO、仓库内 vendored 的 RocksDB C API、预编译静态库、Go 测试。
 
-### Task 1: Write failing tests for expanded config and config-string-based open/create
+### 任务 1：先为扩展配置和基于配置字符串的 create/open 编写失败测试
 
-**Files:**
-- Modify: `rocksdb/options_test.go`
-- Modify: `rocksdb/db_test.go`
+**文件：**
+- 修改：`rocksdb/options_test.go`
+- 修改：`rocksdb/db_test.go`
 
-**Step 1: Write the failing tests**
+**步骤 1：编写失败测试**
 
-Add tests that require:
-- `Config` to expose the requested fields
-- `DefaultConfig()` to initialize the critical new fields
-- config validation to reject invalid required values
-- `Create` to succeed using the config-string-based path
-- `Open` to succeed using the same path with different create flags
+增加测试，要求：
+- `Config` 暴露用户要求的字段
+- `DefaultConfig()` 初始化关键新增字段
+- 配置校验能拦截非法值
+- `Create` 能通过配置字符串路径成功创建数据库
+- `Open` 能沿用同一条路径，但使用不同的创建标志
 
-**Step 2: Run the tests to verify they fail**
+**步骤 2：运行测试并确认失败**
 
-Run:
+执行：
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'Test(Create|Open|Default|Validate)' -v
 ```
 
-Expected: FAIL because the config surface and low-level options-string assembly do not yet exist.
+预期：FAIL，因为当时的配置面和底层配置字符串构造尚未实现。
 
-### Task 2: Introduce low-level pointer wrappers with Close methods
+### 任务 2：引入仅持有指针且带 Close 的底层包装对象
 
-**Files:**
-- Modify: `internal/cgo/options.go`
-- Modify: `internal/cgo/db.go`
-- Modify: `internal/cgo/errors.go`
-- Create: `internal/cgo/cache.go`
-- Create: `internal/cgo/block_based_options.go`
-- Create: `internal/cgo/rate_limiter.go`
-- Create: `internal/cgo/config_options.go`
+**文件：**
+- 修改：`internal/cgo/options.go`
+- 修改：`internal/cgo/db.go`
+- 修改：`internal/cgo/errors.go`
+- 新建：`internal/cgo/cache.go`
+- 新建：`internal/cgo/block_based_options.go`
+- 新建：`internal/cgo/rate_limiter.go`
+- 新建：`internal/cgo/config_options.go`
 
-**Step 1: Write the failing low-level tests**
+**步骤 1：先写失败测试**
 
-Add minimal tests or package-local assertions that require all pointer wrappers to expose `Close()` and not panic when double-closed.
+增加最小化测试或包内断言，要求所有指针包装对象都暴露 `Close()`，并且重复关闭时不会 panic。
 
-**Step 2: Run tests to verify failure**
+**步骤 2：运行测试并确认失败**
 
-Run:
-
-```bash
-CGO_ENABLED=1 go test ./internal/cgo -v
-```
-
-Expected: FAIL because the wrapper types do not exist yet.
-
-**Step 3: Write the minimal implementation**
-
-Implement pointer-only wrappers for the needed objects first:
-- options wrapper
-- block-based options wrapper
-- cache wrapper
-- rate limiter wrapper
-- config-options wrapper if needed by `rocksdb_get_options_from_string`
-- db wrapper
-
-Every wrapper must have `Close()`.
-
-**Step 4: Re-run tests**
-
-Run:
+执行：
 
 ```bash
 CGO_ENABLED=1 go test ./internal/cgo -v
 ```
 
-Expected: PASS or fail only at the next missing behavior layer.
+预期：FAIL，因为这些包装类型尚不存在。
 
-### Task 3: Expand Config and build RocksDB option strings
+**步骤 3：补最小实现**
 
-**Files:**
-- Modify: `rocksdb/config.go`
-- Modify: `rocksdb/options.go`
+先实现以下仅持有指针的包装对象：
+- options 包装
+- block-based options 包装
+- cache 包装
+- rate limiter 包装
+- 如果 `rocksdb_get_options_from_string` 需要，则增加 config-options 包装
+- db 包装
 
-**Step 1: Implement the requested `Config` surface**
+所有包装对象都必须提供 `Close()`。
 
-Add the exact fields requested by the user, keeping the YAML tags.
+**步骤 4：重新运行测试**
 
-**Step 2: Add config normalization and validation**
+执行：
 
-Implement defaulting and validation for required string/int fields so bad input fails before touching RocksDB.
+```bash
+CGO_ENABLED=1 go test ./internal/cgo -v
+```
 
-**Step 3: Build RocksDB options text**
+预期：PASS，或者只在下一层未实现行为上失败，而不是缺少包装对象本身。
 
-Generate an options string matching RocksDB option-string expectations for the supported fields. Keep the first version minimal and only map what is actually used by `Create`/`Open` today.
+### 任务 3：扩展 Config 并生成 RocksDB 选项字符串
 
-**Step 4: Re-run tests**
+**文件：**
+- 修改：`rocksdb/config.go`
+- 修改：`rocksdb/options.go`
 
-Run:
+**步骤 1：实现用户要求的 `Config` 配置面**
+
+加入用户明确要求的字段，并保留 YAML tag。
+
+**步骤 2：补配置归一化与校验**
+
+实现默认值和校验逻辑，确保非法字符串或数值在接触 RocksDB 之前就失败。
+
+**步骤 3：构造 RocksDB 选项文本**
+
+生成满足 RocksDB option-string 语法要求的配置字符串。第一版保持最小实现，只映射当前 `Create`/`Open` 实际会用到的字段。
+
+**步骤 4：重新运行测试**
+
+执行：
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'Test(Default|Validate)' -v
 ```
 
-Expected: PASS.
+预期：PASS。
 
-### Task 4: Rework Create/Open around `rocksdb_get_options_from_string`
+### 任务 4：围绕 `rocksdb_get_options_from_string` 重做 Create/Open
 
-**Files:**
-- Modify: `rocksdb/db.go`
+**文件：**
+- 修改：`rocksdb/db.go`
 
-**Step 1: Replace direct setter-based option construction**
+**步骤 1：替换原来的直接 setter 组装路径**
 
-Make `Create(path, cfg)` and `Open(path, cfg)` assemble the config string and invoke the low-level wrapper that loads options through `rocksdb_get_options_from_string`.
+让 `Create(path, cfg)` 和 `Open(path, cfg)` 先组装配置字符串，再调用底层包装，通过 `rocksdb_get_options_from_string` 加载选项。
 
-**Step 2: Preserve create/open flag differences**
+**步骤 2：保留 create/open 标志位差异**
 
-Ensure `Create` and `Open` differ only in create-if-missing / error-if-exists behavior.
+确保 `Create` 和 `Open` 的唯一区别仍然是 create-if-missing / error-if-exists 等创建标志。
 
-**Step 3: Ensure all temporary low-level objects are closed**
+**步骤 3：确保所有临时底层对象都会被关闭**
 
-Every helper object created during option assembly must be explicitly closed.
+在构造选项过程中创建的每个底层辅助对象都必须显式关闭。
 
-**Step 4: Re-run targeted tests**
+**步骤 4：重新运行定向测试**
 
-Run:
+执行：
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'Test(Create|Open)' -v
 ```
 
-Expected: PASS.
+预期：PASS。
 
-### Task 5: Final verification and manual QA
+### 任务 5：最终验证与手工 QA
 
-**Files:**
-- No additional files required unless fixes are needed
+**文件：**
+- 如有必要，修改：`README.md`
 
-**Step 1: Run diagnostics**
+**步骤 1：运行诊断**
 
-Run LSP diagnostics on all changed Go files and require zero errors.
+对所有改动过的 Go 文件运行 LSP 诊断，要求 0 error。
 
-**Step 2: Run full verification**
+**步骤 2：运行完整验证**
 
-Run:
+执行：
 
 ```bash
 CGO_ENABLED=1 go test ./internal/cgo -v
@@ -155,14 +155,14 @@ CGO_ENABLED=1 go test ./...
 CGO_ENABLED=1 go build ./...
 ```
 
-Expected: PASS.
+预期：PASS。
 
-**Step 3: Manual QA**
+**步骤 3：手工 QA**
 
-Run a real create/open/close lifecycle test and confirm it succeeds.
+执行真实的 create/open/close 生命周期测试，确认结果成功。
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'TestCreateCloseThenOpen' -v
 ```
 
-Expected: PASS.
+预期：PASS。

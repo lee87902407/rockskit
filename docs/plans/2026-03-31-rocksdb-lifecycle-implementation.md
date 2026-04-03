@@ -1,215 +1,195 @@
-# RocksDB Lifecycle Implementation Plan
+# RocksDB 生命周期实现计划
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **给 Claude：** 必须使用 `superpowers:executing-plans` 子技能按任务逐步执行本计划。
 
-**Goal:** Add `facebook/rocksdb` as a submodule and replace the placeholder `rocksdb.Create`/`Open`/`Close` implementation with a real RocksDB-backed lifecycle that builds options from migrated config.
+**目标：** 将 `facebook/rocksdb` 作为子模块接入，并把占位版 `rocksdb.Create`/`Open`/`Close` 实现替换成真实的 RocksDB 生命周期实现，同时基于迁移后的配置构建选项。
 
-**Architecture:** Keep the public lifecycle API in `rocksdb/`, isolate all native calls and ownership handling in `internal/cgo/`, and keep the ANSI C shim in `c/`. Migrate only the config fields needed to build options for lifecycle creation first, not the entire reference surface.
+**架构：** 对外生命周期 API 保持在 `rocksdb/`；所有原生调用和所有权处理都收敛到 `internal/cgo/`；ANSI C shim 保留在 `c/`。第一阶段只迁移生命周期创建所需的最小配置面，不一次性照搬全部参考实现。
 
-**Tech Stack:** Go 1.25.3, CGO, RocksDB C API, local `facebook/rocksdb` git submodule, shell build script for native library compilation.
+**技术栈：** Go 1.25.3、CGO、RocksDB C API、本地 `facebook/rocksdb` git 子模块、用于编译原生库的 shell 脚本。
 
-### Task 1: Add RocksDB submodule and native build entrypoint
+### 任务 1：添加 RocksDB 子模块和原生构建入口
 
-**Files:**
-- Modify: `.gitmodules`
-- Create: `third_party/rocksdb/` (git submodule)
-- Create: `scripts/build-rocksdb.sh`
+**文件：**
+- 修改：`.gitmodules`
+- 新建：`third_party/rocksdb/`（git submodule）
+- 新建：`scripts/build-rocksdb.sh`
 
-**Step 1: Add a failing verification command**
-
-Run:
+**步骤 1：先写失败验证命令**
 
 ```bash
 test -f third_party/rocksdb/include/rocksdb/c.h
 ```
 
-Expected: FAIL because the submodule does not exist yet.
+预期：FAIL，因为当时子模块尚不存在。
 
-**Step 2: Add the submodule**
-
-Run:
+**步骤 2：添加子模块**
 
 ```bash
 GIT_MASTER=1 git submodule add ssh://org-69631@github.com:facebook/rocksdb.git third_party/rocksdb
 ```
 
-**Step 3: Add the build script**
+**步骤 3：添加构建脚本**
 
-Create `scripts/build-rocksdb.sh` that:
-- validates `third_party/rocksdb` exists
-- runs RocksDB's static library build in the submodule
-- emits a stable output path for CGO to link against
+创建 `scripts/build-rocksdb.sh`，要求：
+- 校验 `third_party/rocksdb` 存在
+- 在子模块中完成 RocksDB 静态库构建
+- 产出一个稳定路径，供 CGO 侧链接使用
 
-**Step 4: Verify the build script works**
-
-Run:
+**步骤 4：验证构建脚本可用**
 
 ```bash
 ./scripts/build-rocksdb.sh
 ```
 
-Expected: exits 0 and produces a buildable RocksDB library artifact.
+预期：退出码为 0，并且生成可被 CGO 链接的 RocksDB 库文件。
 
-### Task 2: Migrate the minimal lifecycle config surface
+### 任务 2：迁移最小生命周期配置面
 
-**Files:**
-- Create: `rocksdb/options.go`
-- Create: `rocksdb/config.go`
-- Test: `rocksdb/options_test.go`
+**文件：**
+- 新建：`rocksdb/options.go`
+- 新建：`rocksdb/config.go`
+- 测试：`rocksdb/options_test.go`
 
-**Step 1: Write the failing test**
+**步骤 1：先写失败测试**
 
-Add tests for the minimum migrated config surface:
-- env config for cache/block size
-- db config for write buffer size, max bytes for level base, target file size base, level0 compaction trigger, compression type
-- defaulting/validation behavior for empty or invalid values
+增加最小迁移配置面的测试：
+- env 配置：cache/block size
+- db 配置：write buffer size、max bytes for level base、target file size base、level0 compaction trigger、compression type
+- 空值或非法值的默认值/校验行为
 
-**Step 2: Run the test to verify it fails**
-
-Run:
+**步骤 2：运行测试并确认失败**
 
 ```bash
 go test ./rocksdb -run 'Test(BuildOptions|DefaultConfig|ConfigValidation)' -v
 ```
 
-Expected: FAIL because config types and option builders do not exist yet.
+预期：FAIL，因为配置类型和选项构建器当时还不存在。
 
-**Step 3: Write the minimal implementation**
+**步骤 3：补最小实现**
 
-Implement Go-facing config structs adapted from the reference:
-- `EnvConfig` with `LRUSize`, `BlockSize`
-- `Config` with only lifecycle-critical fields
-- defaults that keep local development usable
+按参考实现思路引入 Go 侧配置结构：
+- `EnvConfig`：`LRUSize`、`BlockSize`
+- `Config`：只保留生命周期必需字段
+- 默认值以本地开发可用为准
 
-**Step 4: Re-run the tests**
-
-Run:
+**步骤 4：重新运行测试**
 
 ```bash
 go test ./rocksdb -run 'Test(BuildOptions|DefaultConfig|ConfigValidation)' -v
 ```
 
-Expected: PASS.
+预期：PASS。
 
-### Task 3: Add the C shim for lifecycle and option wiring
+### 任务 3：增加生命周期所需的 C shim 和选项接线
 
-**Files:**
-- Create: `c/include/rockskit.h`
-- Create: `c/src/db.c`
-- Create: `c/src/options.c`
-- Create: `c/src/error.c`
+**文件：**
+- 新建：`c/include/rockskit.h`
+- 新建：`c/src/db.c`
+- 新建：`c/src/options.c`
+- 新建：`c/src/error.c`
 
-**Step 1: Write the failing CGO-focused test**
+**步骤 1：先写面向 CGO 的失败测试**
 
-Add a package-level lifecycle test that expects native create/open/close to work once the bridge exists.
+增加包级生命周期测试，要求原生 create/open/close 在 bridge 存在后能够工作。
 
-**Step 2: Run the test to verify it fails**
-
-Run:
+**步骤 2：运行测试并确认失败**
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'TestNative(Create|Open|Close)' -v
 ```
 
-Expected: FAIL because the native bridge does not exist yet.
+预期：FAIL，因为原生 bridge 当时尚不存在。
 
-**Step 3: Write the minimal C implementation**
+**步骤 3：实现最小 C 层功能**
 
-Implement only:
-- option allocation/free helpers needed by lifecycle
-- db create/open wrappers using RocksDB C API
-- db close wrapper
-- central errptr helpers
+只实现：
+- 生命周期所需的 option 分配/释放辅助函数
+- 基于 RocksDB C API 的 db create/open 包装
+- db close 包装
+- 集中的 errptr 辅助处理
 
-**Step 4: Re-run the test**
-
-Run:
+**步骤 4：重新运行测试**
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'TestNative(Create|Open|Close)' -v
 ```
 
-Expected: bridge compiles or fails at the next missing layer, not at missing C wrappers.
+预期：bridge 能编译，或者只在下一层未实现逻辑上失败，而不是因为缺少 C 包装函数失败。
 
-### Task 4: Add the CGO bridge and replace placeholder lifecycle implementation
+### 任务 4：增加 CGO bridge 并替换占位生命周期实现
 
-**Files:**
-- Create: `internal/cgo/bridge.go`
-- Create: `internal/cgo/db.go`
-- Create: `internal/cgo/options.go`
-- Create: `internal/cgo/errors.go`
-- Modify: `rocksdb/db.go`
-- Modify: `rocksdb/db_test.go`
+**文件：**
+- 新建：`internal/cgo/bridge.go`
+- 新建：`internal/cgo/db.go`
+- 新建：`internal/cgo/options.go`
+- 新建：`internal/cgo/errors.go`
+- 修改：`rocksdb/db.go`
+- 修改：`rocksdb/db_test.go`
 
-**Step 1: Extend the failing lifecycle tests**
+**步骤 1：扩展失败中的生命周期测试**
 
-Cover these behaviors:
-- `Create` builds options from config and creates a new RocksDB database
-- `Create` fails when the target already exists
-- `Open` opens only an existing initialized database
-- `Close` releases the native handle and stays idempotent
+覆盖以下行为：
+- `Create` 能基于配置构建选项并创建新 RocksDB 数据库
+- 目标已存在时 `Create` 应失败
+- `Open` 只能打开已存在且已初始化的数据库
+- `Close` 释放原生句柄并保持幂等
 
-**Step 2: Run the targeted tests and watch them fail**
-
-Run:
+**步骤 2：运行定向测试并观察失败**
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'Test(Create|Open|Close)' -v
 ```
 
-Expected: FAIL because `rocksdb/db.go` still uses the marker-file placeholder.
+预期：FAIL，因为当时 `rocksdb/db.go` 仍然使用 marker-file 占位实现。
 
-**Step 3: Replace the placeholder with the minimal native implementation**
+**步骤 3：用最小原生实现替换占位逻辑**
 
-Implement:
-- `DB` holding native handle ownership
-- `Create(path string, cfg *Config)` or equivalent config-aware constructor chosen to preserve the public API clearly
+实现：
+- 持有原生句柄所有权的 `DB`
+- `Create(path string, cfg *Config)` 或语义清晰且能保持对外 API 的等价构造函数
 - `Open(...)`
 - `Close()`
 
-Apply option building only through the new config surface and native bridge.
+所有选项组装都必须经过新的配置面和原生 bridge。
 
-**Step 4: Re-run targeted tests**
-
-Run:
+**步骤 4：重新运行定向测试**
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'Test(Create|Open|Close)' -v
 ```
 
-Expected: PASS.
+预期：PASS。
 
-### Task 5: Full verification and manual QA
+### 任务 5：完整验证和手工 QA
 
-**Files:**
-- Modify: `README.md` (only if build/run instructions changed materially)
+**文件：**
+- 如有必要，修改：`README.md`
 
-**Step 1: Run diagnostics**
+**步骤 1：运行诊断**
 
-Run LSP diagnostics on every changed Go file and ensure zero errors.
+对所有改动过的 Go 文件运行 LSP 诊断，确保 0 error。
 
-**Step 2: Run package and full-project tests**
-
-Run:
+**步骤 2：运行包级与全项目测试**
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -v
-CGO_ENABLED=1 go test ./... 
+CGO_ENABLED=1 go test ./...
 go build ./...
 ```
 
-Expected: PASS.
+预期：PASS。
 
-**Step 3: Manual QA**
+**步骤 3：手工 QA**
 
-Run a real create/open/close scenario against a temp dir.
+针对临时目录执行一次真实 create/open/close 场景：
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'TestCreateCloseThenOpen' -v
 ```
 
-Expected: PASS with actual native RocksDB lifecycle behavior.
+预期：PASS，并且体现真实的原生 RocksDB 生命周期行为。
 
-**Step 4: Record residual risks**
+**步骤 4：记录残余风险**
 
-If macOS linker requirements force extra local dependencies, document the exact command or environment needed in `README.md`.
+如果 macOS 链接仍需要额外本地依赖，则在 `README.md` 中准确记录所需命令或环境变量。

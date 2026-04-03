@@ -1,214 +1,196 @@
-# RocksDB Prebuilt Artifacts Implementation Plan
+# RocksDB 预编译产物实现计划
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **给 Claude：** 必须使用 `superpowers:executing-plans` 子技能按任务逐步执行本计划。
 
-**Goal:** Publish `rockskit` with platform-specific prebuilt RocksDB static libraries so downstream users can import the Go module and use it directly without manually compiling or installing RocksDB.
+**目标：** 让 `rockskit` 以平台区分的预编译 RocksDB 静态库形式发布，使下游用户只需引入 Go module 即可直接使用，而不需要手动编译或安装 RocksDB。
 
-**Architecture:** Keep RocksDB source as a submodule for maintainers, but generate and commit prebuilt native artifacts under a repository-owned `native/` layout keyed by `GOOS/GOARCH`. Select the matching headers and static archive in `internal/cgo/` using platform-specific build files so consumers get the correct artifact automatically at build time.
+**架构：** 对维护者保留 RocksDB 源码子模块；对仓库本身则在 `native/` 下按 `GOOS/GOARCH` 组织并提交预编译产物。`internal/cgo/` 通过平台专属构建文件自动选择正确的头文件与静态库，让下游构建时自动命中对应产物。
 
-**Tech Stack:** Go 1.25.3, CGO, RocksDB C API, prebuilt static archives, shell build script, darwin/linux amd64/arm64 only.
+**技术栈：** Go 1.25.3、CGO、RocksDB C API、预编译静态库、shell 构建脚本，仅支持 darwin/linux 的 amd64/arm64。
 
-### Task 1: Define prebuilt artifact layout and platform selection tests
+### 任务 1：定义预编译产物布局并编写平台选择测试
 
-**Files:**
-- Create: `internal/cgo/platform_test.go`
-- Create: `internal/cgo/platform.go`
-- Create: `native/.gitkeep`
+**文件：**
+- 新建：`internal/cgo/platform_test.go`
+- 新建：`internal/cgo/platform.go`
+- 新建：`native/.gitkeep`
 
-**Step 1: Write the failing test**
+**步骤 1：先写失败测试**
 
-Add tests for a deterministic artifact layout:
+为确定性的产物布局增加测试：
 - `darwin/amd64` -> `native/darwin_amd64/`
 - `darwin/arm64` -> `native/darwin_arm64/`
 - `linux/amd64` -> `native/linux_amd64/`
 - `linux/arm64` -> `native/linux_arm64/`
-- unsupported platforms return a clear error
+- 不支持的平台返回清晰错误
 
-**Step 2: Run the test to verify it fails**
-
-Run:
+**步骤 2：运行测试并确认失败**
 
 ```bash
 go test ./internal/cgo -run 'TestNativeArtifactDir|TestUnsupportedPlatform' -v
 ```
 
-Expected: FAIL because the selector helpers do not exist yet.
+预期：FAIL，因为当时平台选择辅助函数尚未实现。
 
-**Step 3: Write the minimal implementation**
+**步骤 3：补最小实现**
 
-Implement platform selection helpers in `internal/cgo/platform.go` that:
-- map `runtime.GOOS`/`runtime.GOARCH` to the native artifact directory name
-- reject unsupported platforms explicitly
+在 `internal/cgo/platform.go` 中实现平台选择辅助函数：
+- 将 `runtime.GOOS`/`runtime.GOARCH` 映射到预编译目录名
+- 对不支持的平台显式报错
 
-**Step 4: Re-run the tests**
-
-Run:
+**步骤 4：重新运行测试**
 
 ```bash
 go test ./internal/cgo -run 'TestNativeArtifactDir|TestUnsupportedPlatform' -v
 ```
 
-Expected: PASS.
+预期：PASS。
 
-### Task 2: Replace local-source linking with platform-specific prebuilt linkage
+### 任务 2：用平台专属预编译链接替换本地源码直接链接
 
-**Files:**
-- Modify: `internal/cgo/bridge.go`
-- Create: `internal/cgo/bridge_darwin_amd64.go`
-- Create: `internal/cgo/bridge_darwin_arm64.go`
-- Create: `internal/cgo/bridge_linux_amd64.go`
-- Create: `internal/cgo/bridge_linux_arm64.go`
-- Create: `internal/cgo/unsupported.go`
+**文件：**
+- 修改：`internal/cgo/bridge.go`
+- 新建：`internal/cgo/bridge_darwin_amd64.go`
+- 新建：`internal/cgo/bridge_darwin_arm64.go`
+- 新建：`internal/cgo/bridge_linux_amd64.go`
+- 新建：`internal/cgo/bridge_linux_arm64.go`
+- 新建：`internal/cgo/unsupported.go`
 
-**Step 1: Write the failing test**
+**步骤 1：先写失败测试**
 
-Add a small test or build-target verification that expects the current package to compile without referencing `third_party/rocksdb/librocksdb.a` directly.
+增加一个小测试或 build 侧验证，要求当前包在编译时不再直接引用 `third_party/rocksdb/librocksdb.a`。
 
-**Step 2: Run the test/build to verify it fails**
-
-Run:
+**步骤 2：运行测试/构建并确认失败**
 
 ```bash
 go test ./internal/cgo -v
 ```
 
-Expected: FAIL or still reveal hardcoded linkage to the submodule path.
+预期：FAIL，或者仍然能暴露出对子模块路径的硬编码链接。
 
-**Step 3: Write the minimal implementation**
+**步骤 3：补最小实现**
 
-Implement platform-split bridge files with exact `#cgo` directives per supported platform, each pointing at the corresponding `native/<platform>/librocksdb.a` and include directory. Keep unsupported platforms behind a build-tagged stub that returns a compile-time or runtime error.
+实现按平台拆分的 bridge 文件，每个文件都提供精确的 `#cgo` 指令，直接指向对应 `native/<platform>/librocksdb.a` 和 include 目录。对不支持的平台，使用带 build tag 的 stub 返回编译期或运行期错误。
 
-**Step 4: Re-run the verification**
-
-Run:
+**步骤 4：重新运行验证**
 
 ```bash
 go test ./internal/cgo -v
 ```
 
-Expected: PASS on the current machine.
+预期：在当前机器上 PASS。
 
-### Task 3: Build and stage prebuilt RocksDB artifacts
+### 任务 3：构建并落盘预编译 RocksDB 产物
 
-**Files:**
-- Modify: `scripts/build-rocksdb.sh`
-- Create: `scripts/build-rocksdb-prebuilt.sh`
-- Create: `native/darwin_amd64/include/rocksdb/c.h`
-- Create: `native/darwin_amd64/librocksdb.a`
-- Create: `native/darwin_arm64/include/rocksdb/c.h`
-- Create: `native/darwin_arm64/librocksdb.a`
-- Create: `native/linux_amd64/include/rocksdb/c.h`
-- Create: `native/linux_amd64/librocksdb.a`
-- Create: `native/linux_arm64/include/rocksdb/c.h`
-- Create: `native/linux_arm64/librocksdb.a`
+**文件：**
+- 修改：`scripts/build-rocksdb.sh`
+- 新建：`scripts/build-rocksdb-prebuilt.sh`
+- 新建：`native/darwin_amd64/include/rocksdb/c.h`
+- 新建：`native/darwin_amd64/librocksdb.a`
+- 新建：`native/darwin_arm64/include/rocksdb/c.h`
+- 新建：`native/darwin_arm64/librocksdb.a`
+- 新建：`native/linux_amd64/include/rocksdb/c.h`
+- 新建：`native/linux_amd64/librocksdb.a`
+- 新建：`native/linux_arm64/include/rocksdb/c.h`
+- 新建：`native/linux_arm64/librocksdb.a`
 
-**Step 1: Write the failing test**
+**步骤 1：先写失败测试**
 
-Add a file-existence test for required native artifact layout on supported platforms.
+增加一个文件存在性测试，用于校验支持平台所需的 native 产物布局。
 
-**Step 2: Run the test to verify it fails**
-
-Run:
+**步骤 2：运行测试并确认失败**
 
 ```bash
 go test ./internal/cgo -run 'TestRequiredNativeArtifactsExist' -v
 ```
 
-Expected: FAIL because `native/` artifacts are not populated yet.
+预期：FAIL，因为当时 `native/` 目录尚未填充产物。
 
-**Step 3: Write the minimal implementation**
+**步骤 3：补最小实现**
 
-Implement a maintainer-facing script that:
-- accepts target platform tuple(s)
-- builds RocksDB from the submodule for the target
-- copies stripped `librocksdb.a` and required public headers into `native/<platform>/`
-- follows the reference script’s optimization-oriented CMake approach where it makes sense
+实现一个面向维护者的脚本，要求：
+- 接收目标平台元组
+- 从子模块构建目标平台的 RocksDB
+- 将裁剪后的 `librocksdb.a` 和必要公共头文件复制到 `native/<platform>/`
+- 在合适的地方参考原始脚本的 CMake 优化策略
 
-Commit the produced artifacts for the four supported targets.
+提交四个支持平台对应的产物。
 
-**Step 4: Re-run the test**
-
-Run:
+**步骤 4：重新运行测试**
 
 ```bash
 go test ./internal/cgo -run 'TestRequiredNativeArtifactsExist' -v
 ```
 
-Expected: PASS.
+预期：PASS。
 
-### Task 4: Verify downstream-consumption behavior
+### 任务 4：验证下游消费行为
 
-**Files:**
-- Modify: `README.md`
-- Create: `examples/basic/main.go`
+**文件：**
+- 修改：`README.md`
+- 新建：`examples/basic/main.go`
 
-**Step 1: Write the failing end-to-end test**
+**步骤 1：先写失败的端到端验证**
 
-Add an integration test or scripted verification that:
-- uses the published module layout only
-- does not invoke `scripts/build-rocksdb.sh`
-- builds a tiny consumer program that imports the module and opens/closes a DB
+增加集成测试或脚本验证，要求：
+- 只使用发布后的 module 布局
+- 不调用 `scripts/build-rocksdb.sh`
+- 能构建一个最小消费程序，导入模块并完成 DB 的 open/close
 
-**Step 2: Run it to verify the intended failure mode**
-
-Run:
+**步骤 2：运行并确认当前会失败**
 
 ```bash
 CGO_ENABLED=1 go build ./examples/basic
 ```
 
-Expected: FAIL before native artifact selection or example wiring is complete.
+预期：在 native 产物选择或 example 接线完成前 FAIL。
 
-**Step 3: Write the minimal implementation**
+**步骤 3：补最小实现**
 
-Add the example and update docs to explain:
-- supported platforms
-- that native artifacts are already shipped in the module
-- that users do not need to install or compile RocksDB manually
-- that Windows is unsupported
+添加示例程序，并更新文档说明：
+- 支持的平台范围
+- module 已内置 native 产物
+- 用户不需要手动安装或编译 RocksDB
+- Windows 不受支持
 
-**Step 4: Re-run the verification**
-
-Run:
+**步骤 4：重新运行验证**
 
 ```bash
 CGO_ENABLED=1 go build ./examples/basic
 CGO_ENABLED=1 go test ./...
 ```
 
-Expected: PASS.
+预期：PASS。
 
-### Task 5: Final QA and release-readiness verification
+### 任务 5：最终 QA 与发布前验证
 
-**Files:**
-- Modify: `README.md` if any caveats remain
+**文件：**
+- 如仍有注意事项，修改：`README.md`
 
-**Step 1: Run diagnostics**
+**步骤 1：运行诊断**
 
-Run LSP diagnostics on all changed Go files and require zero errors.
+对所有改动过的 Go 文件运行 LSP 诊断，要求 0 error。
 
-**Step 2: Run full validation**
-
-Run:
+**步骤 2：运行完整校验**
 
 ```bash
 CGO_ENABLED=1 go test ./...
 CGO_ENABLED=1 go build ./...
 ```
 
-Expected: PASS.
+预期：PASS。
 
-**Step 3: Manual QA**
+**步骤 3：手工 QA**
 
-Run a real create/open/close scenario and an example build without calling any local RocksDB build script.
+执行真实的 create/open/close 场景，并在不调用任何本地 RocksDB 构建脚本的前提下构建示例程序：
 
 ```bash
 CGO_ENABLED=1 go test ./rocksdb -run 'TestCreateCloseThenOpen' -v
 CGO_ENABLED=1 go build ./examples/basic
 ```
 
-Expected: PASS.
+预期：PASS。
 
-**Step 4: Record release caveats**
+**步骤 4：记录发布注意事项**
 
-Document repository size impact and supported platform matrix in `README.md`.
+在 `README.md` 中记录仓库体积影响和支持平台矩阵。
