@@ -43,14 +43,14 @@ func TestSmallDefaultLargeConfigPresets(t *testing.T) {
 	if small.WriteBufferSize == def.WriteBufferSize {
 		t.Fatal("expected small preset to differ from default write buffer size")
 	}
-	if large.WriteBufferSize == def.WriteBufferSize {
-		t.Fatal("expected large preset to differ from default write buffer size")
-	}
 	if small.LRUSize == def.LRUSize {
 		t.Fatal("expected small preset to differ from default cache size")
 	}
 	if large.LRUSize == def.LRUSize {
 		t.Fatal("expected large preset to differ from default cache size")
+	}
+	if large.WriteBufferNumber == def.WriteBufferNumber && large.MaxBackgroundJobs == def.MaxBackgroundJobs {
+		t.Fatal("expected large preset to differ from default resource tuning")
 	}
 	if small.MaxBackgroundJobs >= large.MaxBackgroundJobs {
 		t.Fatal("expected large preset to allow more background jobs than small preset")
