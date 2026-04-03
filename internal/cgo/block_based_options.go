@@ -1,13 +1,8 @@
 package cgo
 
 /*
+#cgo CFLAGS: -I${SRCDIR}/../../native/darwin_arm64/include -I${SRCDIR}/../../native/linux_amd64/include -I${SRCDIR}/../../native/linux_arm64/include
 #include <rocksdb/c.h>
-
-static inline void rockskit_block_based_options_set_no_block_cache(
-    rocksdb_block_based_table_options_t* opt,
-    unsigned char enabled) {
-  rocksdb_block_based_options_set_no_block_cache(opt, enabled);
-}
 */
 import "C"
 
@@ -48,7 +43,7 @@ func (o *BlockBasedOptions) SetNoBlockCache(enabled bool) {
 	if o == nil || o.ptr == nil {
 		return
 	}
-	C.rockskit_block_based_options_set_no_block_cache(o.ptr, boolToChar(enabled))
+	C.rocksdb_block_based_options_set_no_block_cache(o.ptr, boolToChar(enabled))
 }
 
 func (o *BlockBasedOptions) SetBlockCache(cache *LRUCache) {
