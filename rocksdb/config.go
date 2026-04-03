@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	native "github.com/yanjie/rockskit/internal/cgo"
+	native "github.com/lee87902407/rockskit/internal/cgo"
 )
 
 type Config = native.Config

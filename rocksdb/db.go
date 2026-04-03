@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	native "github.com/yanjie/rockskit/internal/cgo"
+	native "github.com/lee87902407/rockskit/internal/cgo"
 )
 
 type DB struct {
