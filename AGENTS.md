@@ -115,6 +115,8 @@ rockskit/
 - 代码注释统一使用中文，避免在同一项目中混用中英文注释。
 - 计划、设计、实现说明等相关文档统一使用中文编写，避免在同一项目中混用中英文文档。
 - Use the C layer only for repeated RocksDB call normalization and callback glue; simple CRUD wrappers do not need extra abstraction beyond what reduces duplication.
+- C shim 只封装包含实质性逻辑（如多步调用、错误归一化、资源所有权转移）的 RocksDB 操作；仅做单行透传的函数不放入 C shim，CGO 层直接调用 RocksDB 的 `c.h` 中的原始函数。
+- 如果某个 Go 函数对 CGO 的调用次数超过 2 次，应将多次 C 调用合并为一个 C shim 函数，减少 CGO 訨开开销。
 - Preserve defensive copy semantics for user-visible `[]byte` values when crossing from native buffers into Go-owned memory.
 - Centralize `char** errptr` extraction and freeing in one CGO helper path; every failing RocksDB call should become a normal Go `error`.
 - Callback-capable features such as comparator, merge operator, compaction filter, and slice transform should use C glue plus Go-side registries; never pass raw Go pointers into C callbacks.
