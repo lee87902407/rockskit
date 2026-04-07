@@ -81,6 +81,22 @@ func (db *DB) Put(opts *WriteOptions, key, value []byte) error {
 	return errFromC(errptr, "put rocksdb key")
 }
 
+func (db *DB) Delete(opts *WriteOptions, key []byte) error {
+	if db == nil || db.ptr == nil {
+		return errClosedDB("delete")
+	}
+	writeOpts := ensureWriteOptions(opts)
+	var errptr *C.char
+	C.rocksdb_delete(
+		db.ptr,
+		writeOpts.ptr,
+		bytesPtr(key),
+		C.size_t(len(key)),
+		&errptr,
+	)
+	return errFromC(errptr, "delete rocksdb key")
+}
+
 func (db *DB) GetPinned(opts *ReadOptions, key []byte) (*PinnableSlice, error) {
 	if db == nil || db.ptr == nil {
 		return nil, errClosedDB("get pinned")
@@ -197,6 +213,26 @@ func (db *DB) GetDefaultColumnFamily() *ColumnFamilyHandle {
 	return &ColumnFamilyHandle{ptr: handle}
 }
 
+func (db *DB) DeleteCF(handle *ColumnFamilyHandle, opts *WriteOptions, key []byte) error {
+	if db == nil || db.ptr == nil {
+		return errClosedDB("delete cf")
+	}
+	if handle == nil || handle.ptr == nil {
+		return fmt.Errorf("delete cf: column family handle is nil")
+	}
+	writeOpts := ensureWriteOptions(opts)
+	var errptr *C.char
+	C.rocksdb_delete_cf(
+		db.ptr,
+		writeOpts.ptr,
+		handle.ptr,
+		bytesPtr(key),
+		C.size_t(len(key)),
+		&errptr,
+	)
+	return errFromC(errptr, "delete cf")
+}
+
 func (db *DB) PutCF(handle *ColumnFamilyHandle, opts *WriteOptions, key, value []byte) error {
 	if db == nil || db.ptr == nil {
 		return errClosedDB("put cf")
@@ -247,6 +283,261 @@ func (db *DB) GetPinnedCF(handle *ColumnFamilyHandle, opts *ReadOptions, key []b
 		return nil, nil
 	}
 	return newPinnableSlice(ptr, data, length), nil
+}
+
+func (db *DB) MultiGet(opts *ReadOptions, keys [][]byte) ([][]byte, []error) {
+	if db == nil || db.ptr == nil {
+		errs := make([]error, len(keys))
+		for i := range errs {
+			errs[i] = errClosedDB("multi get")
+		}
+		return nil, errs
+	}
+	n := len(keys)
+	if n == 0 {
+		return nil, nil
+	}
+	readOpts := ensureReadOptions(opts)
+
+	cKeys := make([]*C.char, n)
+	cKeySizes := make([]C.size_t, n)
+	for i, k := range keys {
+		cKeys[i] = bytesPtr(k)
+		cKeySizes[i] = C.size_t(len(k))
+	}
+	cVals := make([]*C.char, n)
+	cValSizes := make([]C.size_t, n)
+	cErrs := make([]*C.char, n)
+
+	C.rocksdb_multi_get(
+		db.ptr,
+		readOpts.ptr,
+		C.size_t(n),
+		(**C.char)(unsafe.Pointer(&cKeys[0])),
+		(*C.size_t)(unsafe.Pointer(&cKeySizes[0])),
+		(**C.char)(unsafe.Pointer(&cVals[0])),
+		(*C.size_t)(unsafe.Pointer(&cValSizes[0])),
+		(**C.char)(unsafe.Pointer(&cErrs[0])),
+	)
+
+	vals := make([][]byte, n)
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		if cErrs[i] != nil {
+			errs[i] = errFromC(cErrs[i], fmt.Sprintf("multi get key %d", i))
+			continue
+		}
+		if cVals[i] != nil {
+			vals[i] = C.GoBytes(unsafe.Pointer(cVals[i]), C.int(cValSizes[i]))
+			C.rocksdb_free(unsafe.Pointer(cVals[i]))
+		}
+	}
+	return vals, errs
+}
+
+func (db *DB) MultiGetCF(handles []*ColumnFamilyHandle, opts *ReadOptions, keys [][]byte) ([][]byte, []error) {
+	if db == nil || db.ptr == nil {
+		errs := make([]error, len(keys))
+		for i := range errs {
+			errs[i] = errClosedDB("multi get cf")
+		}
+		return nil, errs
+	}
+	if len(handles) != len(keys) {
+		errs := make([]error, len(keys))
+		for i := range errs {
+			errs[i] = fmt.Errorf("multi get cf: handles count %d != keys count %d", len(handles), len(keys))
+		}
+		return nil, errs
+	}
+	n := len(keys)
+	if n == 0 {
+		return nil, nil
+	}
+	readOpts := ensureReadOptions(opts)
+
+	cCFs := make([]*C.rocksdb_column_family_handle_t, n)
+	cKeys := make([]*C.char, n)
+	cKeySizes := make([]C.size_t, n)
+	for i, k := range keys {
+		if handles[i] == nil || handles[i].ptr == nil {
+			return nil, []error{fmt.Errorf("multi get cf: column family handle %d is nil", i)}
+		}
+		cCFs[i] = handles[i].ptr
+		cKeys[i] = bytesPtr(k)
+		cKeySizes[i] = C.size_t(len(k))
+	}
+	cVals := make([]*C.char, n)
+	cValSizes := make([]C.size_t, n)
+	cErrs := make([]*C.char, n)
+
+	C.rocksdb_multi_get_cf(
+		db.ptr,
+		readOpts.ptr,
+		(**C.rocksdb_column_family_handle_t)(unsafe.Pointer(&cCFs[0])),
+		C.size_t(n),
+		(**C.char)(unsafe.Pointer(&cKeys[0])),
+		(*C.size_t)(unsafe.Pointer(&cKeySizes[0])),
+		(**C.char)(unsafe.Pointer(&cVals[0])),
+		(*C.size_t)(unsafe.Pointer(&cValSizes[0])),
+		(**C.char)(unsafe.Pointer(&cErrs[0])),
+	)
+
+	vals := make([][]byte, n)
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		if cErrs[i] != nil {
+			errs[i] = errFromC(cErrs[i], fmt.Sprintf("multi get cf key %d", i))
+			continue
+		}
+		if cVals[i] != nil {
+			vals[i] = C.GoBytes(unsafe.Pointer(cVals[i]), C.int(cValSizes[i]))
+			C.rocksdb_free(unsafe.Pointer(cVals[i]))
+		}
+	}
+	return vals, errs
+}
+
+func (db *DB) PutList(opts *WriteOptions, keys, values [][]byte) error {
+	if db == nil || db.ptr == nil {
+		return errClosedDB("put list")
+	}
+	n := len(keys)
+	if n == 0 {
+		return nil
+	}
+	if len(values) != n {
+		return fmt.Errorf("put list: keys count %d != values count %d", n, len(values))
+	}
+	writeOpts := ensureWriteOptions(opts)
+
+	cKeys := make([]*C.char, n)
+	cKeySizes := make([]C.size_t, n)
+	cVals := make([]*C.char, n)
+	cValSizes := make([]C.size_t, n)
+	for i := 0; i < n; i++ {
+		cKeys[i] = bytesPtr(keys[i])
+		cKeySizes[i] = C.size_t(len(keys[i]))
+		cVals[i] = bytesPtr(values[i])
+		cValSizes[i] = C.size_t(len(values[i]))
+	}
+
+	var errptr *C.char
+	C.rockskit_put_list(
+		db.ptr,
+		writeOpts.ptr,
+		C.size_t(n),
+		(**C.char)(unsafe.Pointer(&cKeys[0])),
+		(*C.size_t)(unsafe.Pointer(&cKeySizes[0])),
+		(**C.char)(unsafe.Pointer(&cVals[0])),
+		(*C.size_t)(unsafe.Pointer(&cValSizes[0])),
+		&errptr,
+	)
+	return errFromC(errptr, "put list")
+}
+
+func (db *DB) PutListCF(handle *ColumnFamilyHandle, opts *WriteOptions, keys, values [][]byte) error {
+	if db == nil || db.ptr == nil {
+		return errClosedDB("put list cf")
+	}
+	if handle == nil || handle.ptr == nil {
+		return fmt.Errorf("put list cf: column family handle is nil")
+	}
+	n := len(keys)
+	if n == 0 {
+		return nil
+	}
+	if len(values) != n {
+		return fmt.Errorf("put list cf: keys count %d != values count %d", n, len(values))
+	}
+	writeOpts := ensureWriteOptions(opts)
+
+	cKeys := make([]*C.char, n)
+	cKeySizes := make([]C.size_t, n)
+	cVals := make([]*C.char, n)
+	cValSizes := make([]C.size_t, n)
+	for i := 0; i < n; i++ {
+		cKeys[i] = bytesPtr(keys[i])
+		cKeySizes[i] = C.size_t(len(keys[i]))
+		cVals[i] = bytesPtr(values[i])
+		cValSizes[i] = C.size_t(len(values[i]))
+	}
+
+	var errptr *C.char
+	C.rockskit_put_list_cf(
+		db.ptr,
+		writeOpts.ptr,
+		handle.ptr,
+		C.size_t(n),
+		(**C.char)(unsafe.Pointer(&cKeys[0])),
+		(*C.size_t)(unsafe.Pointer(&cKeySizes[0])),
+		(**C.char)(unsafe.Pointer(&cVals[0])),
+		(*C.size_t)(unsafe.Pointer(&cValSizes[0])),
+		&errptr,
+	)
+	return errFromC(errptr, "put list cf")
+}
+
+func (db *DB) DeleteList(opts *WriteOptions, keys [][]byte) error {
+	if db == nil || db.ptr == nil {
+		return errClosedDB("delete list")
+	}
+	n := len(keys)
+	if n == 0 {
+		return nil
+	}
+	writeOpts := ensureWriteOptions(opts)
+
+	cKeys := make([]*C.char, n)
+	cKeySizes := make([]C.size_t, n)
+	for i, k := range keys {
+		cKeys[i] = bytesPtr(k)
+		cKeySizes[i] = C.size_t(len(k))
+	}
+
+	var errptr *C.char
+	C.rockskit_delete_list(
+		db.ptr,
+		writeOpts.ptr,
+		C.size_t(n),
+		(**C.char)(unsafe.Pointer(&cKeys[0])),
+		(*C.size_t)(unsafe.Pointer(&cKeySizes[0])),
+		&errptr,
+	)
+	return errFromC(errptr, "delete list")
+}
+
+func (db *DB) DeleteListCF(handle *ColumnFamilyHandle, opts *WriteOptions, keys [][]byte) error {
+	if db == nil || db.ptr == nil {
+		return errClosedDB("delete list cf")
+	}
+	if handle == nil || handle.ptr == nil {
+		return fmt.Errorf("delete list cf: column family handle is nil")
+	}
+	n := len(keys)
+	if n == 0 {
+		return nil
+	}
+	writeOpts := ensureWriteOptions(opts)
+
+	cKeys := make([]*C.char, n)
+	cKeySizes := make([]C.size_t, n)
+	for i, k := range keys {
+		cKeys[i] = bytesPtr(k)
+		cKeySizes[i] = C.size_t(len(k))
+	}
+
+	var errptr *C.char
+	C.rockskit_delete_list_cf(
+		db.ptr,
+		writeOpts.ptr,
+		handle.ptr,
+		C.size_t(n),
+		(**C.char)(unsafe.Pointer(&cKeys[0])),
+		(*C.size_t)(unsafe.Pointer(&cKeySizes[0])),
+		&errptr,
+	)
+	return errFromC(errptr, "delete list cf")
 }
 
 func OpenWithColumnFamilies(path string, cfg *Config, createIfMissing bool) (*DB, map[string]*ColumnFamilyHandle, error) {
