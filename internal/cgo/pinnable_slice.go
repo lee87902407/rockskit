@@ -33,6 +33,7 @@ func newPinnableSlice(ptr *C.rocksdb_pinnableslice_t, data *C.char, length C.siz
 	if ptr == nil {
 		return nil
 	}
+
 	value := []byte{}
 	if data != nil && length > 0 {
 		value = unsafe.Slice((*byte)(unsafe.Pointer(data)), int(length))
